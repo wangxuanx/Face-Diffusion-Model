@@ -377,7 +377,7 @@ class Unet3D(nn.Module):
         init_padding = init_kernel_size // 2
         self.init_conv = nn.Conv3d(channels, init_dim, (1, init_kernel_size, init_kernel_size), padding = (0, init_padding, init_padding))
 
-        self.init_temporal_attn = Residual(PreNorm(init_dim, temporal_attn(init_dim)))
+        self.init_temporal_attn = Residual(PreNorm(init_dim, temporal_attn(init_dim)))  # Laynormal后做attention，并且残差连接
 
         # dimensions
 
@@ -498,7 +498,7 @@ class Unet3D(nn.Module):
             batch, device = x.shape[0], x.device
             mask = prob_mask_like((batch,), null_cond_prob, device = device)
             cond = torch.where(rearrange(mask, 'b -> b 1'), self.null_cond_emb, cond)
-            t = torch.cat((t, cond), dim = -1)
+            t = torch.cat((t, cond), dim = -1)  # 时间和条件拼起来
 
         h = []
 
@@ -625,6 +625,17 @@ class GaussianDiffusion(nn.Module):
             extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t -
             extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise
         )
+    
+    def predict_noise_from_start(self, x_t, t, x0):
+        return (
+            (extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0) / \
+            extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+        )
+    
+    def predict_start_from_noise_vq(self, x_t, t):
+        return (
+            extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
+        )
 
     def q_posterior(self, x_start, x_t, t):
         posterior_mean = (
@@ -635,60 +646,39 @@ class GaussianDiffusion(nn.Module):
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def p_mean_variance(self, x, t, clip_denoised: bool, cond = None, cond_scale = 1.):
-        x_recon = self.predict_start_from_noise(x, t=t, noise = self.denoise_fn.forward_with_cond_scale(x, t, cond = cond, cond_scale = cond_scale))
-
-        if clip_denoised:
-            s = 1.
-            if self.use_dynamic_thres:
-                s = torch.quantile(
-                    rearrange(x_recon, 'b ... -> b (...)').abs(),
-                    self.dynamic_thres_percentile,
-                    dim = -1
-                )
-
-                s.clamp_(min = 1.)
-                s = s.view(-1, *((1,) * (x_recon.ndim - 1)))
-
-            # clip by threshold, depending on whether static or dynamic
-            x_recon = x_recon.clamp(-s, s) / s
-
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
+    def p_mean_variance(self, x, t, clip_denoised: bool, audio, latent_motion_frames):
+        x_recon = self.denoise_fn(audio, t, x, latent_motion_frames)
+        x_recon_frame = x_recon[:, :, -8:]
+        # x_recon = self.predict_start_from_noise_vq(x_recon, t)
+        # noise = self.predict_noise_from_start(x, t, x_recon)
+        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon_frame, x_t=x, t=t)
+        
         return model_mean, posterior_variance, posterior_log_variance
 
     @torch.inference_mode()
-    def p_sample(self, x, t, cond = None, cond_scale = 1., clip_denoised = True):
+    def p_sample(self, x, t, audio, latent_motion_frames, clip_denoised = False):
         b, *_, device = *x.shape, x.device
-        model_mean, _, model_log_variance = self.p_mean_variance(x = x, t = t, clip_denoised = clip_denoised, cond = cond, cond_scale = cond_scale)
-        noise = torch.randn_like(x)
-        # no noise when t == 0
-        nonzero_mask = (1 - (t == 0).float()).reshape(b, *((1,) * (len(x.shape) - 1)))
-        return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise
+        model_mean, _, model_log_variance = self.p_mean_variance(x, t, clip_denoised, audio, latent_motion_frames)
+
+        noise = torch.randn_like(x) if t > 0 else 0. # no noise if t == 0
+        pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
+        return pred_img
 
     @torch.inference_mode()
-    def p_sample_loop(self, shape, cond = None, cond_scale = 1.):
+    def p_sample_loop(self, shape, audio, latent_motion_frames):
         device = self.betas.device
-
         b = shape[0]
         img = torch.randn(shape, device=device)
 
         for i in tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):
-            img = self.p_sample(img, torch.full((b,), i, device=device, dtype=torch.long), cond = cond, cond_scale = cond_scale)
+            img = self.p_sample(img, torch.full((b,), i, device=device, dtype=torch.long), audio, latent_motion_frames)
 
-        return unnormalize_img(img)
+        img = unnormalize_img(img)
+        return img
 
     @torch.inference_mode()
-    def sample(self, cond = None, cond_scale = 1., batch_size = 16):
-        device = next(self.denoise_fn.parameters()).device
-
-        if is_list_str(cond):
-            cond = bert_embed(tokenize(cond)).to(device)
-
-        batch_size = cond.shape[0] if exists(cond) else batch_size
-        image_size = self.image_size
-        channels = self.channels
-        num_frames = self.num_frames
-        return self.p_sample_loop((batch_size, channels, num_frames, image_size, image_size), cond = cond, cond_scale = cond_scale)
+    def sample(self, audio, latent_motion, latent_motion_frames):
+        return self.p_sample_loop(latent_motion.shape, audio, latent_motion_frames)
 
     @torch.inference_mode()
     def interpolate(self, x1, x2, t = None, lam = 0.5):
@@ -698,7 +688,7 @@ class GaussianDiffusion(nn.Module):
         assert x1.shape == x2.shape
 
         t_batched = torch.stack([torch.tensor(t, device=device)] * b)
-        xt1, xt2 = map(lambda x: self.q_sample(x, t=t_batched), (x1, x2))
+        xt1, xt2 = map(lambda x: self.q_sample (x, t=t_batched), (x1, x2))
 
         img = (1 - lam) * xt1 + lam * xt2
         for i in tqdm(reversed(range(0, t)), desc='interpolation sample time step', total=t):
@@ -714,33 +704,34 @@ class GaussianDiffusion(nn.Module):
             extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def p_losses(self, x_start, t, cond = None, noise = None, **kwargs):
-        b, c, f, h, w, device = *x_start.shape, x_start.device
-        noise = default(noise, lambda: torch.randn_like(x_start))
+    def p_losses(self, x_start, t, audio, motion_frames, one_hot):
 
+        device = x_start.device
+        noise = torch.randn_like(x_start).to(device)  # 随机一个噪声
+
+        # 噪声采样,一次性完成的
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
 
-        if is_list_str(cond):
-            cond = bert_embed(tokenize(cond), return_cls_repr = self.text_use_bert_cls)
-            cond = cond.to(device)
+        # 进入Model中
+        x_recon = self.denoise_fn(audio, t, x_noisy, motion_frames, one_hot)
 
-        x_recon = self.denoise_fn(x_noisy, t, cond = cond, **kwargs)
-
+        x_recon_motion = x_recon[:, :, -8:]
+        # 与gt计算loss
         if self.loss_type == 'l1':
-            loss = F.l1_loss(noise, x_recon)
+            loss = F.l1_loss(x_start, x_recon)
         elif self.loss_type == 'l2':
-            loss = F.mse_loss(noise, x_recon)
+            loss = F.mse_loss(torch.cat([motion_frames, x_start], dim=2), x_recon)
         else:
             raise NotImplementedError()
 
-        return loss
+        return loss, x_recon
 
-    def forward(self, x, *args, **kwargs):
+    def forward(self, x, audio, motion_frames, one_hot):
         b, device, img_size, = x.shape[0], x.device, self.image_size
-        check_shape(x, 'b c f h w', c = self.channels, f = self.num_frames, h = img_size, w = img_size)
+        # check_shape(x, 'b c f h w', c = self.channels, f = self.num_frames, h = img_size, w = img_size)
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
         x = normalize_img(x)
-        return self.p_losses(x, t, *args, **kwargs)
+        return self.p_losses(x, t, audio, motion_frames, one_hot)
 
 # trainer class
 
@@ -781,6 +772,7 @@ def gif_to_tensor(path, channels = 3, transform = T.ToTensor()):
 def identity(t, *args, **kwargs):
     return t
 
+# 数据的归一化方式
 def normalize_img(t):
     return t * 2 - 1
 

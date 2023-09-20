@@ -31,11 +31,10 @@ class Dataset(data.Dataset):
         text = self.data[index]["text"]
         vertice = self.data[index]["vertice"]
         template = self.data[index]["template"]
-        if self.data_type == "train":
-            subject = "_".join(file_name.split("_")[:-1])
-            one_hot = self.one_hot_labels[self.subjects_dict["train"].index(subject)]
-        else:
-            one_hot = self.one_hot_labels
+
+        subject = "_".join(file_name.split("_")[:-1])
+        one_hot = self.one_hot_labels[self.subjects_dict["train"].index(subject)]
+
 
         vertice = vertice.astype(np.float16)
         template = template.astype(np.float16)

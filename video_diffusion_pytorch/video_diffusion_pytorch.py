@@ -646,8 +646,8 @@ class GaussianDiffusion(nn.Module):
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def p_mean_variance(self, x, t, clip_denoised: bool, audio, latent_motion_frames):
-        x_recon = self.denoise_fn(audio, t, x, latent_motion_frames)
+    def p_mean_variance(self, x, t, clip_denoised: bool, audio, latent_motion_frames, one_hot):
+        x_recon = self.denoise_fn.predict(audio, t, x, latent_motion_frames, one_hot)
         x_recon_frame = x_recon[:, :, -8:]
         # x_recon = self.predict_start_from_noise_vq(x_recon, t)
         # noise = self.predict_noise_from_start(x, t, x_recon)
@@ -656,29 +656,29 @@ class GaussianDiffusion(nn.Module):
         return model_mean, posterior_variance, posterior_log_variance
 
     @torch.inference_mode()
-    def p_sample(self, x, t, audio, latent_motion_frames, clip_denoised = False):
+    def p_sample(self, x, t, audio, latent_motion_frames, one_hot, clip_denoised = False):
         b, *_, device = *x.shape, x.device
-        model_mean, _, model_log_variance = self.p_mean_variance(x, t, clip_denoised, audio, latent_motion_frames)
+        model_mean, _, model_log_variance = self.p_mean_variance(x, t, clip_denoised, audio, latent_motion_frames, one_hot)
 
         noise = torch.randn_like(x) if t > 0 else 0. # no noise if t == 0
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
         return pred_img
 
     @torch.inference_mode()
-    def p_sample_loop(self, shape, audio, latent_motion_frames):
+    def p_sample_loop(self, shape, audio, latent_motion_frames, one_hot):
         device = self.betas.device
         b = shape[0]
         img = torch.randn(shape, device=device)
 
-        for i in tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):
-            img = self.p_sample(img, torch.full((b,), i, device=device, dtype=torch.long), audio, latent_motion_frames)
+        for i in tqdm(reversed(range(0, self.num_timesteps, 4)), desc='sampling loop time step', total=self.num_timesteps):
+            img = self.p_sample(img, torch.full((b,), i, device=device, dtype=torch.long), audio, latent_motion_frames, one_hot)
 
         img = unnormalize_img(img)
         return img
 
     @torch.inference_mode()
-    def sample(self, audio, latent_motion, latent_motion_frames):
-        return self.p_sample_loop(latent_motion.shape, audio, latent_motion_frames)
+    def sample(self, audio, latent_motion, latent_motion_frames, one_hot):
+        return self.p_sample_loop(latent_motion.shape, audio, latent_motion_frames, one_hot)
 
     @torch.inference_mode()
     def interpolate(self, x1, x2, t = None, lam = 0.5):

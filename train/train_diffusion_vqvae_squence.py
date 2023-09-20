@@ -63,8 +63,8 @@ def main():
     train_loader = loader['train']
 
     train_epoch = 2000
-    optimizer = torch.optim.AdamW([{'params':diffusion.parameters(), 'lr':0.0001},
-                                   {'params':audioencoder.parameters(), 'lr':0.0001}])
+    optimizer = torch.optim.AdamW([{'params':diffusion.parameters(), 'lr':0.00001},
+                                   {'params':audioencoder.parameters(), 'lr':0.00001}])
 
     save_path = './checkpoints/diffusion_vqvae_squence'
     if not os.path.exists(save_path):
@@ -122,18 +122,20 @@ def run_step(epochs, epoch_log, optimizer, train_loader, diffusion, audioencoder
             tbar.update(1)
 
             sum_loss += denoise_loss.item()
-            denoise_loss.backward()
+
+            loss = loss_recon + denoise_loss 
+            loss.backward()
             optimizer.step()
 
             writer.add_scalar('Loss/denoise', denoise_loss, (epoch_log - 1) * len(train_loader) + i)
             # writer.add_scalar('Loss/vq_loss', vq_loss, (epoch_log - 1) * len(train_loader) + i)
             writer.add_scalar('Loss/recon', loss_recon, (epoch_log - 1) * len(train_loader) + i)
-            # writer.add_scalar('Loss/train', loss, (epoch_log - 1) * len(train_loader) + i)
+            writer.add_scalar('Loss/train', loss, (epoch_log - 1) * len(train_loader) + i)
             # writer.add_scalar('Loss/face_move', move_recone, (epoch_log - 1) * len(train_loader) + i)
             # writer.add_scalar('Loss/face_move_origin', move_origin, (epoch_log - 1) * len(train_loader) + i)
 
     if epoch_log % 100 == 0:
-        save(save_path, epoch_log, diffusion, optimizer)
+        save(save_path, epoch_log, diffusion, audioencoder, optimizer)
     
     return sum_loss / len(train_loader)
 
@@ -170,13 +172,14 @@ def vq_vae_loss(output, target):
     return loss
 
 def recone_loss(output_motion, motion):
-    loss_l1 = torch.nn.functional.l1_loss(output_motion, motion)
-    return loss_l1
+    loss_l2 = torch.nn.functional.mse_loss(output_motion, motion)
+    return loss_l2
 
-def save(save_path, epoch, model, opt):
+def save(save_path, epoch, model, audioencoder, opt):
         data = {
             'epoch': epoch,
             'model': model.state_dict(),
+            'audioencoder': audioencoder.state_dict(),
             'opt': opt.state_dict()
         }
         torch.save(data, str(save_path + f'/model-{epoch}.mpt'))

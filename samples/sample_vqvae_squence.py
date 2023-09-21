@@ -31,7 +31,8 @@ def main():
         timesteps = 1000,   # number of steps
         loss_type = 'l1'    # L1 or L2
     )
-    load_diffusion('./checkpoints/diffusion_vqvae_squence', '200', diffusion)
+    load_diffusion('./checkpoints/diffusion_vqvae_squence', '300', diffusion)
+    load_audioencoder('./checkpoints/diffusion_vqvae_squence', '300', audioencoder)
 
     save_path = './checkpoints/diffusion_vqvae_squence/result'
     dev = 'cuda:1'
@@ -86,7 +87,7 @@ def sample_step(test_loader, dev, diffusion, autoencoder, audioencoder, epoch_lo
 
             result = np.concatenate(result, axis=0)
 
-            np.save(os.path.join(save_folder, file_name[0]), result)
+            np.save(os.path.join(save_folder, file_name[0][:-4]), result)
 
 # 加载Motion Encoder和Motion Decoder
 def load_encoder_decoder(load_path, epoch, encoder, decoder):
@@ -112,6 +113,7 @@ def load_encoder_decoder(load_path, epoch, encoder, decoder):
     freeze(encoder)
     freeze(decoder)
 
+# 加载diffusion
 def load_diffusion(load_path, epoch, diffusion):
     print(f'load diffusion checkpoint from {load_path}/model-{epoch}.mpt')
     checkpoint = torch.load(str(load_path + f'/model-{epoch}.mpt'))['model']
@@ -119,6 +121,15 @@ def load_diffusion(load_path, epoch, diffusion):
     print('load diffusion')
     diffusion.load_state_dict(checkpoint, strict=False)
     print('load diffusion success')
+
+# 加载audioencoder
+def load_audioencoder(load_path, epoch, audioencoder):
+    print(f'load audioencoder checkpoint from {load_path}/model-{epoch}.mpt')
+    checkpoint = torch.load(str(load_path + f'/model-{epoch}.mpt'))['audioencoder']
+    
+    print('load audioencoder')
+    audioencoder.load_state_dict(checkpoint, strict=False)
+    print('load audioencoder success')
 
 # 冻结某一模型
 def freeze(model):

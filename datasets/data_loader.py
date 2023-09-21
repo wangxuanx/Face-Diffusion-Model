@@ -18,9 +18,7 @@ class Dataset(data.Dataset):
         self.data_type = data_type
         self.one_hot_labels = np.eye(len(subjects_dict["train"]))
         self.read_audio = read_audio
-        self.max_audio_length = 160000
-        self.max_motion_length = 300  # BIWI最长为245，在此处直接设置为300
-        self.copy = 5 # 一个动作复制几次，用于增加数据量
+        self.copy = 3 # 一个动作复制几次，用于增加数据量
 
     def __getitem__(self, index):
         index = index % self.len # 一个动作复制几次，用于增加数据量

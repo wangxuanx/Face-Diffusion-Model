@@ -2,60 +2,83 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
+from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
 
+def modulate(x, shift, scale):
+    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+
+class DiTBlock(nn.Module):
+    """
+    A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
+    """
+    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, **block_kwargs):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
+        self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        mlp_hidden_dim = int(hidden_size * mlp_ratio)
+        approx_gelu = lambda: nn.GELU(approximate="tanh")
+        self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(hidden_size, 3 * hidden_size, bias=True)
+        )
+
+    def forward(self, x, c):
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).flatten(-2).chunk(6, dim=1)
+        x = x + gate_msa.unsqueeze(1) * self.attn(modulate(self.norm1(x), shift_msa, scale_msa))
+        x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
+        return x
 
 class FDM(nn.Module):
-    def __init__(self, feature_dim=1024, vertice_dim=70110, n_head=4, num_layers=8, struct='Dec'):
+    def __init__(self, feature_dim=1024, vertice_dim=70110, n_head=16, num_layers=24):
         super(FDM, self).__init__()
         """
         audio: (batch_size, raw_wav)
         template: (batch_size, V*3)
         vertice: (batch_size, seq_len, V*3)
         """
-        self.struct = struct
         self.audio_feature_map = nn.Linear(768, feature_dim)
         # time embedding
         self.time_embedd = TimestepEmbedder(feature_dim, PositionalEncoding(feature_dim, 0.1))
+        # style embedding
+        self.learnable_style_emb = nn.Linear(len('F2 F3 F4 M3 M4 M5 F1 F5 F6 M1'.split(' ')), feature_dim)
         # positional encoding 
         self.PE = PositionalEncoding(feature_dim)
         # temporal bias
-        if struct == 'Enc':
-            encoder_layer = nn.TransformerEncoderLayer(d_model=feature_dim, nhead=n_head, dim_feedforward=2*feature_dim, batch_first=True)
-            self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        elif struct == 'Dec':
-            decoder_layer = nn.TransformerDecoderLayer(d_model=feature_dim, nhead=n_head, dim_feedforward=2*feature_dim, batch_first=True)        
-            self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
-
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(feature_dim, 6 * feature_dim, bias=True)
+        self.blocks = nn.ModuleList([
+            DiTBlock(feature_dim, n_head, mlp_ratio=4.0) for _ in range(num_layers)
+        ])
+        # motion decoder
+        self.motion_decoder = nn.Sequential(
+            nn.Linear(feature_dim, feature_dim),
+            nn.Mish(),
+            nn.Linear(feature_dim, feature_dim, bias=False)
         )
 
     
     def modulate(self, x, shift, scale):
         return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
-    def forward(self, audio, t, vertice, past_motion):
+    def forward(self, audio, t, vertice, one_hot):
         # tgt_mask: :math:`(T, T)`.
         # memory_mask: :math:`(T, S)`.
+        B, T, V = vertice.shape
 
         audio_feature = self.audio_feature_map(audio)
-
         time = self.time_embedd(t.unsqueeze(1))
+        # style embedding
+        style = self.learnable_style_emb(one_hot).unsqueeze(0)
+        
+        cond = time + audio_feature
+        vertice = vertice.flatten(-2).unsqueeze(1) + style
 
-        tens_input = torch.cat((time, audio_feature, past_motion, vertice), 1).transpose(0, 1)
+        for block in self.blocks:
+            x = block(vertice, cond)
 
-        if self.struct == 'Enc':
-            # tgt_mask = self.biased_mask[:, :vertice_input.shape[1], :vertice_input.shape[1]].clone().detach().to(device=self.device)
-            tens_input = self.PE(tens_input)
-            feat_out = self.transformer_encoder(tens_input)
-            feat_out = feat_out[-1:, :, :].transpose(0, 1)
-        elif self.struct == 'Dec':
-            tgt_mask = self.biased_mask[:, :vertice.shape[1], :vertice.shape[1]].clone().detach().to(device=self.device)
-            memory_mask = self.enc_dec_mask(self.device, self.dataset, vertice.shape[1], tens_input.shape[1])
-            feat_out = self.transformer_decoder(vertice, tens_input, tgt_mask=tgt_mask, memory_mask=memory_mask)
-
-        return feat_out
+        x = self.motion_decoder(x)
+        x = x.reshape(B, T, V)
+        return x
 
     def predict(self, audio, template, one_hot, one_hot2=None, weight_of_one_hot=None):
         template = template.unsqueeze(1) # (1,1, V*3)

@@ -147,7 +147,6 @@ def render_sequence_meshes(args, sequence_vertices, template, out_path,predicted
        tmp_video_file_pred.name, video_fname_pred)).split()
     call(cmd)
 
-    file_name_wav = '/data/WX/CodeTalker_WX/MEAD/001.wav'
     # render with audio
     cmd = ('ffmpeg' + ' -i {0} -i {1} -vcodec h264 -ac 2 -channel_layout stereo -qscale 0 {2}'.format(
        file_name_wav, video_fname_pred, video_fname_pred.replace('.mp4', '_audio.mp4'))).split()
@@ -187,13 +186,14 @@ def main():
             template = Mesh(filename=template_file)
             vt, ft = None, None
             tex_img = None
-            predicted_vertices = np.load(predicted_vertices_path).squeeze(1)
+            predicted_vertices = np.load(predicted_vertices_path).squeeze(0)
             # predicted_vertices = predicted_vertices.squeeze(1)
 
             print("predicted_vertices.shape", predicted_vertices.shape)
 
             if len(predicted_vertices.shape) == 2:
-                predicted_vertices = np.reshape(predicted_vertices,(-1, args.vertice_dim//3,3))
+                predicted_vertices = predicted_vertices.reshape(-1, args.vertice_dim//3,3)
+
 
             render_sequence_meshes(args, predicted_vertices, template, output_path,predicted_vertices_path,vt, ft ,tex_img)
 

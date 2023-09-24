@@ -7,9 +7,9 @@ import os
 import torch
 from tqdm import tqdm, trange
 from datasets.data_loader import get_dataloaders
-from models.fdm_vq import FDM
+from models.fdm_adaLN import FDM
 from models.encoder_decoder import Motion_Encoder, Motion_Decoder
-from video_diffusion_pytorch.video_diffusion_pytorch import Unet3D, GaussianDiffusion
+from video_diffusion_pytorch.diffusion_adaLN import Unet3D, GaussianDiffusion
 from models.vq_vae import VQAutoEncoder
 from models.wav2vec import Wav2Vec2Model
 
@@ -18,11 +18,10 @@ def main():
     vq_args = vq_vae_args()
     autoencoder = VQAutoEncoder(vq_args)
     autoencoder.load_state_dict(torch.load('./checkpoints/vq_vae/biwi_stage1.pth.tar')['state_dict'])
-
     # 加载vaw2vec2.0
     audioencoder = Wav2Vec2Model.from_pretrained('/data/WX/wav2vec2-base-960h')
 
-    model = FDM(feature_dim=128, vertice_dim=70110, struct='Enc')
+    model = FDM(feature_dim=1024) 
 
     diffusion = GaussianDiffusion(
         model,
@@ -32,14 +31,14 @@ def main():
         loss_type = 'l1'    # L1 or L2
     )
 
-    load_diffusion('./checkpoints/diffusion_vqvae_squence', '1000', diffusion)
-    load_audioencoder('./checkpoints/diffusion_vqvae_squence', '1000', audioencoder)
+    load_diffusion('./checkpoints/diffusion_vqvae_adaLN', '200', diffusion)
+    load_audioencoder('./checkpoints/diffusion_vqvae_adaLN', '200', audioencoder)
 
-    save_path = './checkpoints/diffusion_vqvae_squence/result'
+    save_path = './checkpoints/diffusion_vqvae_adaLN/result'
     dev = 'cuda:1'
     diffusion.eval()  # 评估diffusion模型
     autoencoder.eval()  # 评估vqvae模型
-    audioencoder.eval()  # 评估wav2vec模型
+    audioencoder.eval()  # 评估audioencoder模型
     diffusion.to(dev)
     autoencoder.to(dev)
     audioencoder.to(dev)
@@ -47,51 +46,41 @@ def main():
     if not os.path.exists(save_path): # 创建保存路径
         os.makedirs(save_path)
 
-    loader = get_dataloaders(batch_size=1, workers=10, read_audio=True)
+    loader = get_dataloaders(batch_size=1, workers=1, read_audio=True)
     test_loader = loader['test']
 
     # 对数据进行采样
     sample_step(test_loader, dev, diffusion, autoencoder, audioencoder, 1, len(test_loader), save_path)
 
+
 def sample_step(test_loader, dev, diffusion, autoencoder, audioencoder, epoch_log, epochs, save_folder):
     with tqdm(range(len(test_loader)), desc=f'Sampling [{epoch_log}/{epochs}]') as tbar:
          for n, (audio, motion, template, one_hot, file_name) in enumerate(test_loader):
-            num_frames = motion.shape[1]
-            audio = audioencoder(audio.to(dev), frame_num=num_frames).last_hidden_state
-            n_frames = audio.shape[1] // 2  # 生成的帧总数
-            template = template.to(dev).unsqueeze(1)
-            one_hot = one_hot.to(dev)
             
-            audio_ids = [0, 1] * 2
-            for i in range((2 + 1) * 2):
-                audio_ids += [i]
+            template = template.to(dev).unsqueeze(1)
 
-            motion_frames = torch.cat([template for _ in range(3)], dim=1).to(dev)
+            audio = audioencoder(audio.to(dev)).last_hidden_state
+            n_frames = audio.shape[1] // 2  # 生成的帧总数
+            one_hot = one_hot.to(dev)
 
             # 逐帧采样生成
             result = []
             for j in trange(n_frames, desc=f'Sampling'):
-                audio_cond = audio[:,audio_ids,:]
+                audio_cond = audio[:,[j * 2, j * 2 + 1],:].to(dev)
 
-                enc_motion, _ = autoencoder.get_quant(motion_frames  - template)
-                sampled_frame = diffusion.sample(audio_cond, enc_motion[:, :, -8:], enc_motion[:, :, :-8], one_hot)
-                result.append(sampled_frame)
-                sampled_frame = torch.cat([enc_motion[:, :, :-8], sampled_frame], dim=2)
+                # 使用template作为初始值来生成序列
+                enc_motion, _ = autoencoder.get_quant(torch.cat([template, template, template], dim=1) - template)
+                sampled_frame = diffusion.sample(audio_cond, enc_motion[:, :, -8:], one_hot)
+                sampled_frame = torch.cat([sampled_frame, sampled_frame, sampled_frame], dim=2)
                 feat_out_q, _, _ = autoencoder.quantize(sampled_frame)
                 # feature decoding
                 output_motion = autoencoder.decode(feat_out_q)
                 output_motion = output_motion[:, -1:, :] + template
-                # result.append(output_motion.cpu().detach().numpy())
+                result.append(output_motion.cpu().detach().numpy())
 
-                motion_frames = torch.cat([motion_frames[:, 1:, :], output_motion], dim=1)
-                audio_ids = audio_ids[2:] + [min((j + 3) * 2, n_frames * 2 - 2)] + [min((j + 3) * 2 + 1, n_frames * 2 - 1)]
 
-            all_feat_out = torch.cat(result, dim=2)
-            feat_out_q, _, _ = autoencoder.quantize(all_feat_out)
-            # feature decoding
-            output_motion = autoencoder.decode(feat_out_q)
-            output_motion = output_motion + template
-            result = output_motion.cpu().detach().numpy()
+            result = np.concatenate(result, axis=0)
+
             np.save(os.path.join(save_folder, file_name[0][:-4]), result)
 
 # 加载Motion Encoder和Motion Decoder
@@ -118,15 +107,6 @@ def load_encoder_decoder(load_path, epoch, encoder, decoder):
     freeze(encoder)
     freeze(decoder)
 
-# 加载diffusion
-def load_diffusion(load_path, epoch, diffusion):
-    print(f'load diffusion checkpoint from {load_path}/model-{epoch}.mpt')
-    checkpoint = torch.load(str(load_path + f'/model-{epoch}.mpt'))['model']
-    
-    print('load diffusion')
-    diffusion.load_state_dict(checkpoint, strict=False)
-    print('load diffusion success')
-
 # 加载audioencoder
 def load_audioencoder(load_path, epoch, audioencoder):
     print(f'load audioencoder checkpoint from {load_path}/model-{epoch}.mpt')
@@ -135,6 +115,14 @@ def load_audioencoder(load_path, epoch, audioencoder):
     print('load audioencoder')
     audioencoder.load_state_dict(checkpoint, strict=False)
     print('load audioencoder success')
+
+def load_diffusion(load_path, epoch, diffusion):
+    print(f'load diffusion checkpoint from {load_path}/model-{epoch}.mpt')
+    checkpoint = torch.load(str(load_path + f'/model-{epoch}.mpt'))['model']
+    
+    print('load diffusion')
+    diffusion.load_state_dict(checkpoint, strict=False)
+    print('load diffusion success')
 
 # 冻结某一模型
 def freeze(model):

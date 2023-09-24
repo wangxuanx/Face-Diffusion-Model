@@ -66,7 +66,7 @@ def main():
     optimizer = torch.optim.AdamW([{'params':diffusion.parameters(), 'lr':0.00001},
                                    {'params':audioencoder.parameters(), 'lr':0.00001}])
 
-    save_path = './checkpoints/diffusion_vqvae_squence'
+    save_path = './checkpoints/diffusion_vqvae_squence_4_prior'
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     writer = SummaryWriter(save_path)
@@ -106,16 +106,16 @@ def run_step(epochs, epoch_log, optimizer, train_loader, diffusion, audioencoder
             # [BATCH, 128, 8*num_frames]
             enc_motion, _ = autoencoder.get_quant(motion - template)  # [batch, 128, 8]
 
-            denoise_loss, result = diffusion(enc_motion[:, :, 16:], audio, enc_motion[:, :, :16], one_hot)
+            denoise_loss, result = diffusion(enc_motion[:, :, -8:], audio, enc_motion[:, :, :-8], one_hot)
             
             # vq_loss = vq_vae_loss(result, enc_motion)
             # feature quantization
             feat_out_q, _, _ = autoencoder.quantize(result)
             # feature decoding
-            output_motion = autoencoder.decode(feat_out_q)
-            output_motion = output_motion[:, -1:, :] + template
+            output_motion = autoencoder.decode(torch.cat([feat_out_q, feat_out_q, feat_out_q], dim=1))
+            output_motion = torch.mean(output_motion, dim=1) + template
 
-            loss_recon = recone_loss(output_motion[:, -1:, :], motion)
+            loss_recon = recone_loss(output_motion, motion[:,-1,:])
 
             # tbar.set_postfix(vq_loss=vq_loss.item(), noise_loss=denoise_loss.item(), loss_recon=loss_recon.item(), loss=loss.item())  # 为tqdm添加loss项
             tbar.set_postfix(loss_recon=loss_recon.item(), noise_loss=denoise_loss.item())
@@ -153,15 +153,15 @@ def get_audio_motion(all_audio, all_motion, batchsize):
     random_idx = torch.randint(num_frames, (batchsize,))
     idx = random_idx.unsqueeze(1)
     audio_idx = torch.cat([(idx - 2) * 2, (idx - 2) * 2 + 1, (idx - 1) * 2, (idx - 1) * 2 + 1, idx * 2, idx * 2 + 1, (idx + 1) * 2, (idx + 1) * 2 + 1, (idx + 2) * 2, (idx + 2) * 2 + 1], dim=1)
-    motion_idx = torch.cat([(idx - 2), (idx - 1), idx], dim=1)
+    motion_idx = torch.cat([(idx - 4), (idx - 3), (idx - 2), (idx - 1), idx], dim=1)
 
     audio_idx[audio_idx < 0] = 0
     audio_idx[audio_idx > num_frames * 2 - 1] = num_frames * 2 - 1
     motion_idx[motion_idx < 0] = 0
     motion_idx[motion_idx > num_frames - 1] = num_frames - 1
 
-    audio = all_audio[:, audio_idx, :]  # 五帧音频，前三帧对应于面部动作，后两帧维额外信息
-    motion = all_motion[:, motion_idx, :]  # 对应的三帧面部运动
+    audio = all_audio[:, audio_idx, :]  # 五帧音频用来训练
+    motion = all_motion[:, motion_idx, :]  # 取额外的四帧来训练
 
     audio = audio.squeeze(0)
     motion = motion.squeeze(0)

@@ -15,7 +15,7 @@ class FDM(nn.Module):
         """
         self.struct = struct
         self.audio_extract = nn.Sequential(
-            nn.Linear(768, feature_dim),
+            nn.Linear(768, feature_dim),  # 128 1024
             nn.Mish(),
             nn.Linear(feature_dim, feature_dim)
         )
@@ -62,7 +62,7 @@ class FDM(nn.Module):
             # tgt_mask = self.biased_mask[:, :vertice_input.shape[1], :vertice_input.shape[1]].clone().detach().to(device=self.device)
             tens_input = self.PE(tens_input)
             feat_out = self.transformer_encoder(tens_input)
-            feat_out = feat_out[-24:, :, :].transpose(0, 1)
+            feat_out = feat_out[-8:, :, :].transpose(0, 1)
         elif self.struct == 'Dec':
             tgt_mask = self.biased_mask[:, :vertice.shape[1], :vertice.shape[1]].clone().detach().to(device=self.device)
             memory_mask = self.enc_dec_mask(self.device, self.dataset, vertice.shape[1], tens_input.shape[1])
@@ -85,15 +85,9 @@ class FDM(nn.Module):
         # tens_input = torch.cat((time, audio_feature, past_motion, vertice), 1).transpose(0, 1)
         tens_input = torch.cat((time, audio_feature, style, motion), 1).permute(1, 0, 2)
 
-        if self.struct == 'Enc':
-            # tgt_mask = self.biased_mask[:, :vertice_input.shape[1], :vertice_input.shape[1]].clone().detach().to(device=self.device)
-            tens_input = self.PE(tens_input)
-            feat_out = self.transformer_encoder(tens_input)
-            feat_out = feat_out[-24:, :, :].transpose(0, 1)
-        elif self.struct == 'Dec':
-            tgt_mask = self.biased_mask[:, :vertice.shape[1], :vertice.shape[1]].clone().detach().to(device=self.device)
-            memory_mask = self.enc_dec_mask(self.device, self.dataset, vertice.shape[1], tens_input.shape[1])
-            feat_out = self.transformer_decoder(vertice, tens_input, tgt_mask=tgt_mask, memory_mask=memory_mask)
+        tens_input = self.PE(tens_input)
+        feat_out = self.transformer_encoder(tens_input)
+        feat_out = feat_out[-24:, :, :].transpose(0, 1)
 
         feat_out = self.motion_decoder(feat_out).transpose(1, 2)
         return feat_out

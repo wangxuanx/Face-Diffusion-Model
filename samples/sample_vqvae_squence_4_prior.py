@@ -32,8 +32,8 @@ def main():
         loss_type = 'l1'    # L1 or L2
     )
 
-    load_diffusion('./checkpoints/diffusion_vqvae_squence', '1000', diffusion)
-    load_audioencoder('./checkpoints/diffusion_vqvae_squence', '1000', audioencoder)
+    load_diffusion('./checkpoints/diffusion_vqvae_squence_4_prior', '100', diffusion)
+    load_audioencoder('./checkpoints/diffusion_vqvae_squence_4_prior', '100', audioencoder)
 
     save_path = './checkpoints/diffusion_vqvae_squence/result'
     dev = 'cuda:1'
@@ -75,23 +75,19 @@ def sample_step(test_loader, dev, diffusion, autoencoder, audioencoder, epoch_lo
 
                 enc_motion, _ = autoencoder.get_quant(motion_frames  - template)
                 sampled_frame = diffusion.sample(audio_cond, enc_motion[:, :, -8:], enc_motion[:, :, :-8], one_hot)
-                result.append(sampled_frame)
-                sampled_frame = torch.cat([enc_motion[:, :, :-8], sampled_frame], dim=2)
+                sampled_frame = torch.cat([sampled_frame, sampled_frame, sampled_frame], dim=2)
                 feat_out_q, _, _ = autoencoder.quantize(sampled_frame)
                 # feature decoding
                 output_motion = autoencoder.decode(feat_out_q)
                 output_motion = output_motion[:, -1:, :] + template
-                # result.append(output_motion.cpu().detach().numpy())
+                result.append(output_motion.cpu().detach().numpy())
 
                 motion_frames = torch.cat([motion_frames[:, 1:, :], output_motion], dim=1)
-                audio_ids = audio_ids[2:] + [min((j + 3) * 2, n_frames * 2 - 2)] + [min((j + 3) * 2 + 1, n_frames * 2 - 1)]
+                audio_ids = audio_ids[2:] + [min(j * 2 + 2, n_frames * 2 - 2)] + [min(j * 2 + 3, n_frames * 2 - 1)]
 
-            all_feat_out = torch.cat(result, dim=2)
-            feat_out_q, _, _ = autoencoder.quantize(all_feat_out)
-            # feature decoding
-            output_motion = autoencoder.decode(feat_out_q)
-            output_motion = output_motion + template
-            result = output_motion.cpu().detach().numpy()
+
+            result = np.concatenate(result, axis=0)
+
             np.save(os.path.join(save_folder, file_name[0][:-4]), result)
 
 # 加载Motion Encoder和Motion Decoder

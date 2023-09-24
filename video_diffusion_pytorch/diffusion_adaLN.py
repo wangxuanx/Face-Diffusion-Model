@@ -620,21 +620,18 @@ class GaussianDiffusion(nn.Module):
         log_variance = extract(self.log_one_minus_alphas_cumprod, t, x_start.shape)
         return mean, variance, log_variance
 
+    # 获得信号
     def predict_start_from_noise(self, x_t, t, noise):
         return (
             extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t -
             extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise
         )
     
+    # 获得噪声
     def predict_noise_from_start(self, x_t, t, x0):
         return (
             (extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0) / \
             extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
-        )
-    
-    def predict_start_from_noise_vq(self, x_t, t):
-        return (
-            extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
         )
 
     def q_posterior(self, x_start, x_t, t):
@@ -646,39 +643,38 @@ class GaussianDiffusion(nn.Module):
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def p_mean_variance(self, x, t, clip_denoised: bool, audio, latent_motion_frames, one_hot):
-        x_recon = self.denoise_fn.predict(audio, t, x, latent_motion_frames, one_hot)
-        x_recon_frame = x_recon[:, :, -8:]
-        # x_recon = self.predict_start_from_noise_vq(x_recon, t)
-        # noise = self.predict_noise_from_start(x, t, x_recon)
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon_frame, x_t=x, t=t)
+    def p_mean_variance(self, x, t, clip_denoised: bool, audio, one_hot):
+        noise = self.denoise_fn(audio, t, x, one_hot)  # 预测噪声
+        x_recon = self.predict_start_from_noise(x, t, noise)
+
+        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
         
         return model_mean, posterior_variance, posterior_log_variance
 
     @torch.inference_mode()
-    def p_sample(self, x, t, audio, latent_motion_frames, one_hot, clip_denoised = False):
+    def p_sample(self, x, t, audio, one_hot, clip_denoised = False):
         b, *_, device = *x.shape, x.device
-        model_mean, _, model_log_variance = self.p_mean_variance(x, t, clip_denoised, audio, latent_motion_frames, one_hot)
+        model_mean, _, model_log_variance = self.p_mean_variance(x, t, clip_denoised, audio, one_hot)
 
         noise = torch.randn_like(x) if t > 0 else 0. # no noise if t == 0
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
         return pred_img
 
     @torch.inference_mode()
-    def p_sample_loop(self, shape, audio, latent_motion_frames, one_hot):
+    def p_sample_loop(self, shape, audio, one_hot):
         device = self.betas.device
         b = shape[0]
         img = torch.randn(shape, device=device)
 
         for i in tqdm(reversed(range(0, self.num_timesteps, 4)), desc='sampling loop time step', total=self.num_timesteps):
-            img = self.p_sample(img, torch.full((b,), i, device=device, dtype=torch.long), audio, latent_motion_frames, one_hot)
+            img = self.p_sample(img, torch.full((b,), i, device=device, dtype=torch.long), audio, one_hot)
 
         img = unnormalize_img(img)
         return img
 
     @torch.inference_mode()
-    def sample(self, audio, latent_motion, latent_motion_frames, one_hot):
-        return self.p_sample_loop(latent_motion.shape, audio, latent_motion_frames, one_hot)
+    def sample(self, audio, latent_motion, one_hot):
+        return self.p_sample_loop(latent_motion.shape, audio, one_hot)
 
     @torch.inference_mode()
     def interpolate(self, x1, x2, t = None, lam = 0.5):

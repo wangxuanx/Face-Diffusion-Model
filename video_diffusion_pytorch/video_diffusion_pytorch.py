@@ -715,12 +715,11 @@ class GaussianDiffusion(nn.Module):
         # 进入Model中
         x_recon = self.denoise_fn(audio, t, x_noisy, motion_frames, one_hot)
 
-        x_recon_motion = x_recon[:, :, -8:]
         # 与gt计算loss
         if self.loss_type == 'l1':
             loss = F.l1_loss(x_start, x_recon)
         elif self.loss_type == 'l2':
-            loss = F.mse_loss(torch.cat([motion_frames, x_start], dim=2), x_recon)
+            loss = F.mse_loss(x_start, x_recon)
         else:
             raise NotImplementedError()
 

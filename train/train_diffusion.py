@@ -3,9 +3,9 @@ import sys
 sys.path.append(".")
 import torch
 from tqdm import tqdm
-from video_diffusion_pytorch.video_diffusion_pytorch import Unet3D, GaussianDiffusion
+from video_diffusion_pytorch.diffusion_encoder_decoder import Unet3D, GaussianDiffusion
 from models.fdm import FDM
-from datasets.data_loader_frames import get_dataloaders
+from datasets.data_loader import get_dataloaders
 from torch.cuda.amp import autocast, GradScaler
 
 from models.encoder_decoder import Motion_Encoder, Motion_Decoder
@@ -16,16 +16,16 @@ def main():
     motion_enc = Motion_Encoder(1024, 70110)
     motion_dec = Motion_Decoder(1024, 70110)
 
-    load_encoder_decoder('./checkpoints/encoder_decoder_load_model', 'best', motion_enc, motion_dec)
+    load_encoder_decoder('./checkpoints_code_error/encoder_decoder_load_model', '400', motion_enc, motion_dec)
 
-    model = FDM(feature_dim=1024, vertice_dim=1024, struct='Enc')
+    model = FDM(feature_dim=1024, vertice_dim=1024, struct='Dec')
 
     diffusion = GaussianDiffusion(
         model,
         image_size = 32,
         num_frames = 5,
         timesteps = 1000,   # number of steps
-        loss_type = 'l1'    # L1 or L2
+        loss_type = 'l2'    # L1 or L2
     )
 
     load_model = False
@@ -38,15 +38,15 @@ def main():
     motion_enc.to(dev)
     motion_dec.to(dev)
 
-    loader = get_dataloaders(batch_size=16, workers=10)
-    train_loader = loader['train']
+    train_loader = get_dataloaders(batch_size=1, workers=10, read_audio=True, type="train")
+
 
     train_epoch = 2000
     optimizer = torch.optim.AdamW([{'params': diffusion.parameters(), 'lr': 0.0001},
                                    {'params': motion_dec.parameters(), 'lr': 0.0001},
                                    {'params': motion_enc.parameters(), 'lr': 0.0001}])
 
-    save_path = './checkpoints/diffusion_frames'
+    save_path = './checkpoints/diffusion_Encoder_Decoder'
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     writer = SummaryWriter(save_path)
@@ -65,22 +65,20 @@ def main():
 def run_step(epochs, epoch_log, optimizer, train_loader, diffusion, encoder, decoder, writer, save_path, dev):
     
     with tqdm(range(len(train_loader)), desc=f'Train[{epoch_log}/{epochs}]') as tbar:
-         for i, (audio, motion, template, motion_frames) in enumerate(train_loader):
+         for i, (audio, motion, template, one_hot, file_name) in enumerate(train_loader):
             optimizer.zero_grad()
 
-            audio = audio.to(dev).squeeze(1)
-            motion = motion.to(dev).unsqueeze(1).flatten(-2)
-            template = template.to(dev).unsqueeze(1).flatten(-2)
-            motion_frames = motion_frames.to(dev).flatten(-2)
+            audio = audio.to(dev)
+            motion = motion.to(dev)
+            template = template.to(dev)
+            one_hot = one_hot.to(dev)
 
-            all_motion = torch.cat([motion, motion_frames], dim=1)
-            all_latent_motion = encoder(all_motion - template)
-            
-            denoise_loss, result = diffusion(all_latent_motion[:, -1:, :], audio, all_latent_motion[:, :-1, :])
+            latent_motion = encoder(motion - template)
+            denoise_loss, result = diffusion(latent_motion, audio, one_hot)
 
             output_motion = decoder(result) + template
 
-            loss_recon = recone_loss(output_motion, motion)
+            loss_recon = recone_loss(output_motion, motion[:,:output_motion.shape[1]])
 
             loss = denoise_loss * 1.0 + loss_recon * 1.0
 
@@ -105,9 +103,9 @@ def run_step(epochs, epoch_log, optimizer, train_loader, diffusion, encoder, dec
     return loss
 
 def recone_loss(output_motion, motion):
-    loss_l1 = torch.nn.functional.l1_loss(output_motion, motion)
+    # loss_l1 = torch.nn.functional.l1_loss(output_motion, motion)
     loss_l2 = torch.nn.functional.mse_loss(output_motion, motion)
-    return loss_l1 + loss_l2
+    return loss_l2
 
 def save(save_path, epoch, model, encoder, decoder, opt):
         data = {
@@ -144,10 +142,6 @@ def load_encoder_decoder(load_path, epoch, encoder, decoder):
     print('load encoder decoder')
     encoder.load_state_dict(enc_state_dict, strict=False)
     decoder.load_state_dict(dec_state_dict, strict=False)
-
-    print('freeze encoder decoder')
-    encoder.eval()
-    freeze(encoder)
 
 # 冻结某一模型
 def freeze(model):

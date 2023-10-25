@@ -45,7 +45,6 @@ class Trainer(nn.Module):
         self.motion_decoder = Motion_Decoder(latent_dim, motion_dim)
 
     def forward(self, motion, template):
-        template = template.unsqueeze(1)
         motion = motion - template  # 将template减去只获得motion
         motion = self.motion_encoder(motion)
         motion = self.motion_decoder(motion)
@@ -53,8 +52,5 @@ class Trainer(nn.Module):
         return motion
 
     def loss_fun(self, motion, motion_recon):
-        ratio_l1 = 1.0
-        ratio_l2 = 1.0
-        loss_l1 = nn.L1Loss()(motion, motion_recon)
-        loss_l2 = nn.MSELoss()(motion, motion_recon)
-        return loss_l1 * ratio_l1 + loss_l2 * ratio_l2
+        loss_l2 = nn.L1Loss()(motion, motion_recon)
+        return loss_l2

@@ -18,7 +18,7 @@ class Dataset(data.Dataset):
         self.data_type = data_type
         self.one_hot_labels = np.eye(len(subjects_dict["train"]))
         self.read_audio = read_audio
-        self.copy = 3 # 一个动作复制几次，用于增加数据量
+        self.copy = 1 # 一个动作复制几次，用于增加数据量
 
     def __getitem__(self, index):
         index = index % self.len # 一个动作复制几次，用于增加数据量
@@ -31,7 +31,12 @@ class Dataset(data.Dataset):
         template = self.data[index]["template"]
 
         subject = "_".join(file_name.split("_")[:-1])
-        one_hot = self.one_hot_labels[self.subjects_dict["train"].index(subject)]
+        if self.data_type == "train":
+            one_hot = self.one_hot_labels[self.subjects_dict["train"].index(subject)]
+        elif self.data_type == "val":
+            one_hot = self.one_hot_labels[self.subjects_dict["val"].index(subject)]
+        elif self.data_type == "test":
+            one_hot = self.one_hot_labels[self.subjects_dict["test"].index(subject)]
 
 
         vertice = vertice.astype(np.float16)
@@ -45,16 +50,16 @@ class Dataset(data.Dataset):
     def __len__(self):
         return self.len * self.copy # 一个动作复制几次，用于增加数据量
 
-def read_data():
+def read_data(type="test"):
     data_root = '/data/WX/BIWI_dataset/'
     wav_path = 'wav'
     text_path = 'raw_text'
     vertices_path = 'vertices_npy'
     template_file = 'templates.pkl'
     wav2vec2model_path = '/data/WX/wav2vec2-base-960h'
-    train_subjects = 'F2 F3 F4 M3 M4 M5 F1 F5 F6 M1'
-    val_subjects = 'F2 F3 F4 M3 M4 M5 F1 F5 F6 M1'
-    test_subjects = 'F2 F3 F4 M3 M4 M5 F1 F5 F6 M1'
+    train_subjects = 'F2 F3 F4 M3 M4 M5'
+    val_subjects = 'F2 F3 F4 M3 M4 M5'
+    test_subjects = 'F1 F5 F6 F7 F8 M1 M2 M6'
     read_audio = True
 
     print("Loading data...")
@@ -62,6 +67,13 @@ def read_data():
     train_data = []
     valid_data = []
     test_data = []
+
+    if type == "train":
+        sub = [i for i in train_subjects.split(" ")]
+    elif type == "val":
+        sub = [i for i in val_subjects.split(" ")]
+    elif type == "test":
+        sub = [i for i in test_subjects.split(" ")]
 
     
     audio_path = os.path.join(data_root, wav_path)
@@ -77,7 +89,7 @@ def read_data():
 
     for r, ds, fs in os.walk(audio_path):
         for f in tqdm(fs):
-            if f.endswith("wav"):
+            if f.endswith("wav") and check_in_list(sub, f):
                 if read_audio:
                     wav_path = os.path.join(r,f)
                     speech_array, sampling_rate = librosa.load(wav_path, sr=16000)
@@ -120,6 +132,12 @@ def read_data():
     print('Loaded data: Train-{}, Val-{}, Test-{}'.format(len(train_data), len(valid_data), len(test_data)))
     return train_data, valid_data, test_data, subjects_dict
 
+def check_in_list(sub, f):
+    for i in sub:
+        if i in f:
+            return True
+    return False
+
 def padding_collate_fn(batch):
     batch_audio_list = [item[0] for item in batch]
     batch_motion_list = [item[1] for item in batch]
@@ -141,15 +159,18 @@ def padding_collate_fn(batch):
     return result
 
 
-def get_dataloaders(batch_size=64, workers=10, read_audio=False):
+def get_dataloaders(batch_size=64, workers=10, read_audio=False, type="train"):
     dataset = {}
-    train_data, valid_data, test_data, subjects_dict = read_data()
-    train_data = Dataset(train_data, subjects_dict, "train", read_audio)
-    dataset["train"] = data.DataLoader(dataset=train_data, batch_size=batch_size, shuffle=True, num_workers=workers)
-    valid_data = Dataset(valid_data,subjects_dict,"val",read_audio)
-    dataset["valid"] = data.DataLoader(dataset=valid_data, batch_size=1, shuffle=False, num_workers=workers)
-    test_data = Dataset(test_data,subjects_dict,"test",read_audio)
-    dataset["test"] = data.DataLoader(dataset=test_data, batch_size=1, shuffle=False, num_workers=workers)
+    train_data, valid_data, test_data, subjects_dict = read_data(type=type)
+    if type == "train":
+        train_data = Dataset(train_data, subjects_dict, "train", read_audio)
+        dataset = data.DataLoader(dataset=train_data, batch_size=batch_size, shuffle=True, num_workers=workers)
+    elif type == "val":
+        valid_data = Dataset(valid_data,subjects_dict,"val",read_audio)
+        dataset = data.DataLoader(dataset=valid_data, batch_size=1, shuffle=False, num_workers=workers)
+    elif type == "test":
+        test_data = Dataset(test_data,subjects_dict,"test",read_audio)
+        dataset = data.DataLoader(dataset=test_data, batch_size=1, shuffle=False, num_workers=workers)
     return dataset
 
 if __name__ == "__main__":

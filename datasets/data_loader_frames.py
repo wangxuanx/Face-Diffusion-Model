@@ -23,61 +23,37 @@ class Dataset(data.Dataset):
         self.read_audio = read_audio
         self.max_audio_length = 160000
         self.max_motion_length = 300  # BIWI最长为245，在此处直接设置为300
-        self.copy = 5 # 一个动作复制几次，用于增加数据量
-        self.audio_embed = 2 # 获取前后的音频特征
-        self.motion_embed = 2 # 获取之前的运动特征
+        self.copy = 1 # 一个动作复制几次，用于增加数据量
 
     def __getitem__(self, index):
-        index = index % self.len # 一个动作复制几次，用于增加数据量
+        """Returns one data pair (source and target)."""
+        # seq_len, fea_dim
+        file_name = self.data[index]["name"]
+        audio = self.data[index]["audio"]
+        text = self.data[index]["text"]
+        vertice = self.data[index]["vertice"]
+        template = self.data[index]["template"]
 
+        subject = "_".join(file_name.split("_")[:-1])
         if self.data_type == "train":
-            # index = index % self.len # 一个动作复制几次，用于增加数据量
-            """Returns one data pair (source and target)."""
-            
-            audio_ids = [index * 2, index * 2 + 1]
-            if index == 0:
-                audio_ids = [index * 2, index * 2 + 1] * 2 + audio_ids + [index + 1, index + 2] + [index + 3, index + 4]
-                motion_frames_ids = [0, 0]
-            elif index == 1:
-                audio_ids = [index - 1, index] * 2 + audio_ids + [(index + 1) * 2, (index + 1) * 2 + 1] + [(index + 2) * 2, (index + 2) * 2 + 1]
-                motion_frames_ids = [0, 1]
-            
-            if index == self.len - 1:
-                audio_ids = [(index - 2) * 2, (index - 2) * 2 + 1] + [(index - 1) * 2, (index - 1) * 2 + 1] + audio_ids + [index * 2, index * 2 + 1] * 2
-                motion_frames_ids = [self.len - 1, self.len - 1]
-            elif index == self.len - 2:
-                audio_ids = [(index - 2) * 2, (index - 2) * 2 + 1] + [(index - 1) * 2, (index - 1) * 2 + 1] + audio_ids + [index, index + 1] * 2
-                motion_frames_ids = [self.len - 2, self.len - 1]
+            one_hot = self.one_hot_labels[self.subjects_dict["train"].index(subject)]
+        elif self.data_type == "val":
+            one_hot = self.one_hot_labels[self.subjects_dict["val"].index(subject)]
+        elif self.data_type == "test":
+            one_hot = self.one_hot_labels[self.subjects_dict["test"].index(subject)]
 
-            if index != 0 and index != 1 and index != self.len - 1 and index != self.len - 2:
-                audio_ids = [(index - 2) * 2, (index - 2) * 2 + 1] + [(index - 1) * 2, (index - 1) * 2 + 1] + audio_ids + [(index + 1) * 2, (index + 1) * 2 + 1] + [(index + 2) * 2, (index + 2) * 2 + 1]
-                motion_frames_ids = [index - 2, index - 1]
 
-            audio = self.data[0][audio_ids, :]
-            vertice = self.data[1][index,:]
-            motion_frames = self.data[1][motion_frames_ids, :]  # 前两帧面部运动
-            template = self.data[2]
-
-            vertice = vertice.astype(np.float16)
-            template = template.astype(np.float16)
-
-            audio = torch.autograd.Variable(audio, requires_grad = False)
-            audio = audio.data
-
-            return torch.FloatTensor(audio), torch.FloatTensor(vertice), torch.FloatTensor(template), torch.FloatTensor(motion_frames)
+        vertice = vertice.astype(np.float16)
+        template = template.astype(np.float16)
         
-        elif self.data_type == "valid" or self.data_type == "test":
-            audio = self.data[0]
-            vertice = self.data[1]
-            template = self.data[2]
+        if self.read_audio:
+            return torch.FloatTensor(audio), torch.FloatTensor(vertice), torch.FloatTensor(template), torch.FloatTensor(one_hot), file_name
+        else:
+            return torch.FloatTensor(vertice), torch.FloatTensor(template), torch.FloatTensor(one_hot), file_name
 
-            audio = torch.autograd.Variable(audio, requires_grad = False)
-            audio = audio.data
-            
-            return torch.FloatTensor(audio), torch.FloatTensor(vertice), torch.FloatTensor(template)
         
     def __len__(self):
-        return self.len * self.copy
+        return self.len
 
 
 def read_data():

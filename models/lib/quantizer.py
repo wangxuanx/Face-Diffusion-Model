@@ -29,30 +29,28 @@ class VectorQuantizer(nn.Module):
         self.e_dim = e_dim
         self.beta = beta
 
-        self.embedding = nn.Embedding(self.n_e, self.e_dim)
+        self.embedding = nn.Embedding(self.n_e, self.e_dim)  # 将特征向量映射到embedding空间：n_e * e_dim
         self.embedding.weight.data.uniform_(-1.0 / self.n_e, 1.0 / self.n_e)
 
     def forward(self, z):
-        z_flattened = z.reshape(-1, self.e_dim)
+        z_flattened = z.reshape(-1, self.e_dim)  # 将z展平
 
-        d = torch.sum(z_flattened ** 2, dim=1, keepdim=True) + \
-            torch.sum(self.embedding.weight**2, dim=1) - 2 * \
-            torch.matmul(z_flattened, self.embedding.weight.t())
-        d1 = torch.sum(z_flattened ** 2, dim=1, keepdim=True)
-        d2 = torch.sum(self.embedding.weight**2, dim=1)
-        d3 = torch.matmul(z_flattened, self.embedding.weight.t())
+        d = torch.sum(z_flattened ** 2, dim=1, keepdim=True) \
+            + torch.sum(self.embedding.weight**2, dim=1) \
+            - 2 * torch.matmul(z_flattened, self.embedding.weight.t())  # 计算z和embedding的距离
+        # d1 = torch.sum(z_flattened ** 2, dim=1, keepdim=True)
+        # d2 = torch.sum(self.embedding.weight**2, dim=1)
+        # d3 = torch.matmul(z_flattened, self.embedding.weight.t())
 
-        min_encoding_indices = torch.argmin(d, dim=1).unsqueeze(1)
+        min_encoding_indices = torch.argmin(d, dim=1).unsqueeze(1)  # 获得最接近的索引K值，每行有一个 1 其余皆为0， 矩阵共有 K 列，同1列上可以有多个1。
         min_encodings = torch.zeros(min_encoding_indices.shape[0], self.n_e).to(z) 
         min_encodings.scatter_(1, min_encoding_indices, 1)
-
 
         # get quantized latent vectors
         z_q = torch.matmul(min_encodings, self.embedding.weight).view(z.shape)
 
         # compute loss for embedding
-        loss = self.beta * torch.mean((z_q.detach()-z)**2) + \
-                   torch.mean((z_q - z.detach()) ** 2)
+        loss = self.beta * torch.mean((z_q.detach()-z)**2) + torch.mean((z_q - z.detach()) ** 2)
 
         # preserve gradients
         z_q = z + (z_q - z).detach()

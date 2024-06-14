@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 def main():
     vq_args = vocaset_vq_vae_args()
     autoencoder = VQAutoEncoder(vq_args)
-    autoencoder.load_state_dict(torch.load('/data/WX/fdm/checkpoints/vqvae_vocaset/model.pth.tar')['state_dict'])
+    autoencoder.load_state_dict(torch.load('checkpoints/vqvae_vocaset/model.pth.tar')['state_dict'])
     freeze(autoencoder)  # 冻结vqvae模型
 
     model = FDM(feature_dim=1024)

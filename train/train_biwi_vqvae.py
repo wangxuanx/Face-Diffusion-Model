@@ -134,11 +134,3 @@ def freeze(model):
 
 if __name__ == "__main__":
     main()
-
-# videos = torch.randn(1, 3, 5, 32, 32) # video (batch, channels, frames, height, width) - normalized from -1 to +1
-# loss = diffusion(videos)
-# loss.backward()
-# # after a lot of training
-
-# sampled_videos = diffusion.sample(batch_size = 4)
-# sampled_videos.shape # (4, 3, 5, 32, 32)

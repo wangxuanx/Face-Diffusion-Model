@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 def main():
     vq_args = biwi_vq_vae_args()
     autoencoder = VQAutoEncoder(vq_args)
-    autoencoder.load_state_dict(torch.load('/data/WX/fdm/checkpoints_code_error/vq_vae/biwi_stage1.pth.tar')['state_dict'])
+    autoencoder.load_state_dict(torch.load('checkpoints/vq_vae/biwi_stage1.pth.tar')['state_dict'])
     freeze(autoencoder)  # 冻结vqvae模型
 
     model = FDM(feature_dim=1024)
@@ -44,14 +44,14 @@ def main():
     train_epoch = 50
     optimizer = torch.optim.AdamW(diffusion.parameters(), lr=1e-4)
 
-    save_path = './checkpoints/diffusion_BIWI_origin_vqvae'
+    save_path = './checkpoints/diffusion_BIWI_vqvae'
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     writer = SummaryWriter(save_path)
 
     if load_model:
         print('load pretrained model from checkpoints')
-        load('./checkpoints/diffusion_BIWI_origin_vqvae', '100', diffusion, optimizer)
+        load('./checkpoints/diffusion_BIWI_vqvae', '100', diffusion, optimizer)
 
     diffusion.train()
     autoencoder.eval()
@@ -124,9 +124,6 @@ def recone_loss(output_motion, motion):
     if output_motion.shape[1] != motion.shape[1]:
         motion = motion[:, :output_motion.shape[1], :]
     loss = torch.nn.functional.mse_loss(output_motion, motion)
-    # pdist = torch.nn.PairwiseDistance(p=2)
-    # output = pdist(output_motion, motion)
-    # loss = torch.mean(output)
     return loss
 
 def save(save_path, epoch, model, opt):

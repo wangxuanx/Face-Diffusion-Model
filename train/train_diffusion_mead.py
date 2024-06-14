@@ -133,18 +133,15 @@ def get_audio_motion_signal(all_audio, all_motion,  batchsize, num_pre=0):
     pad_motion_idx = torch.tensor([0] * num_pre + [i for i in range(0, num_frames)] + [num_frames - 1] * num_pre)
     all_audio = all_audio[:, pad_audio_idx, :]
     all_motion = all_motion[:, pad_motion_idx, :]
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
-    # 随机选择batchsize大小的序列
+                                   
     random_idx = torch.randint(num_frames, (batchsize,))
     random_idx += num_pre
 
-    # 创建一个空列表，用于存储切片后的张量
     sliced_audio = [] 
     sliced_motion = []
 
-    # 对每个索引值进行循环
     for index in random_idx:
-        # 在第二个维度上使用索引进行切片
+
         sliced_tensor = all_audio[:, (index - num_pre) * 2:(index + num_pre + 1) * 2, :]
         sliced_audio.append(sliced_tensor)
         sliced_tensor = all_motion[:, index:index + 1, :]
@@ -155,41 +152,6 @@ def get_audio_motion_signal(all_audio, all_motion,  batchsize, num_pre=0):
 
     return audio, motion
 
-# 从一个数据中随机选择batchsize大小的序列
-def get_audio_motion(all_audio, all_latent_motion, all_motion,  batchsize, num_pre=0):
-    num_frames = all_audio.shape[1] // 2
-
-    pad_audio_idx = torch.tensor([0, 1] * num_pre + [i for i in range(0, num_frames * 2)] + [num_frames * 2 - 2, num_frames * 2 - 1] * num_pre)
-    pad_latent_motion_idx = torch.tensor([0] * num_pre * 8 + [i for i in range(0, num_frames * 8)] + [num_frames * 8 - 1] * num_pre * 8)
-    pad_motion_idx = torch.tensor([0] * num_pre + [i for i in range(0, num_frames)] + [num_frames - 1] * num_pre)
-    all_audio = all_audio[:, pad_audio_idx, :]
-    all_latent_motion = all_latent_motion[:, :, pad_latent_motion_idx]
-    all_motion = all_motion[:, pad_motion_idx, :]
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
-    # 随机选择batchsize大小的序列
-    random_idx = torch.randint(num_frames, (batchsize,))
-    random_idx += num_pre
-
-    # 创建一个空列表，用于存储切片后的张量
-    sliced_audio = [] 
-    sliced_latent_motion = []
-    sliced_motion = []
-
-    # 对每个索引值进行循环
-    for index in random_idx:
-        # 在第二个维度上使用索引进行切片
-        sliced_tensor = all_audio[:, (index - num_pre) * 2:(index + num_pre + 1) * 2, :]
-        sliced_audio.append(sliced_tensor)
-        sliced_tensor = all_latent_motion[:, :, index * 8:index * 8 + 8]
-        sliced_latent_motion.append(sliced_tensor)
-        sliced_tensor = all_motion[:, [index], :]
-        sliced_motion.append(sliced_tensor)
-
-    audio = torch.stack(sliced_audio).squeeze(1)
-    latent_motion = torch.stack(sliced_latent_motion).squeeze(1)
-    motion = torch.stack(sliced_motion).squeeze(1)
-
-    return audio, latent_motion, motion
 
 def vq_vae_loss(output, target):
     loss = torch.nn.functional.mse_loss(output, target)

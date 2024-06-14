@@ -105,16 +105,16 @@ def freeze(model):
 
 @torch.no_grad()
 def predict(audioencoder, diffusion, decoder, dev):
-    wav_path = '/data/WX/fdm/sample_out/music.wav'
+    wav_path = 'sample_out/music.wav'
     speech_array, sampling_rate = librosa.load(wav_path, sr=16000)
-    processor = Wav2Vec2Processor.from_pretrained('/data/WX/wav2vec2-base-960h')
+    processor = Wav2Vec2Processor.from_pretrained('wav2vec2-base-960h')
     processed = processor(speech_array, sampling_rate=16000).input_values
     input_values = np.squeeze(processed)
     emotion_one_hot = torch.FloatTensor([1, 0, 0, 0, 0, 0, 0])
     one_hot = torch.FloatTensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
 
     audio = torch.from_numpy(input_values).unsqueeze(0)
-    template = torch.from_numpy(np.load('/data/WX/MEAD/FLAME_template.npy'))
+    template = torch.from_numpy(np.load('MEAD/FLAME_template.npy'))
     audio = audio.to(dev)
     template = template.to(dev).flatten(-2)
     emotion_one_hot = emotion_one_hot.to(dev)
@@ -127,7 +127,7 @@ def predict(audioencoder, diffusion, decoder, dev):
     output_motion = decoder(result) + template
     output_motion = output_motion.detach().cpu().numpy()
 
-    np.save(os.path.join('/data/WX/fdm/sample_out', 'music'), output_motion)
+    np.save(os.path.join('sample_out', 'music'), output_motion)
 
 
 if __name__ == "__main__":

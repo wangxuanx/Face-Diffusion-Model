@@ -43,7 +43,7 @@ pip install -r requirements.txt
 ## **Dataset Preparation**
 
 ### 3D MEAD Dataset
-The [MEAD dataset](https://wywu.github.io/projects/MEAD/MEAD.html), initially designed for emotionalized speech-face generation research, has been repurposed in our study to generate 3D facial animations. This necessitates the conversion of the 2D MEAD dataset into a 3D MEAD dataset, a process achieved through reconstruction using [EMOCA](https://github.com/radekd91/emoca). Moreover, we discard the identity of humans for simplification. Given the extensive data in the MEAD dataset, we selectively utilize Level 3’s M003 through M0040, excluding the neutral section, to concentrate on generating emotional 3D facial animations. The dataset is subsequently divided into a training set 3D MEAD-Train (M003 to M034), a verification set 3D MEAD-Val (M035 and M039), and a test set 3D MEAD-Test (M037 and M040). Please download the 3D MEAD dataset from [Google Cloud Driven](https://drive.google.com/drive/folders/1the46xT6orJa_3LMLXXkyAAmLqGcEG6Y?usp=drive_link) and put it in the `3D_MEAD` folder.
+The [MEAD dataset](https://wywu.github.io/projects/MEAD/MEAD.html), initially designed for emotionalized speech-face generation research, has been repurposed in our study to generate 3D facial animations. This necessitates the conversion of the 2D MEAD dataset into a 3D MEAD dataset, a process achieved through reconstruction using [EMOCA](https://github.com/radekd91/emoca). Moreover, we discard the identity of humans for simplification. Given the extensive data in the MEAD dataset, we selectively utilize Level 3’s M003 through M0040, excluding the neutral section, to concentrate on generating emotional 3D facial animations. The dataset is subsequently divided into a training set 3D MEAD-Train (M003 to M034), a verification set 3D MEAD-Val (M035 and M039), and a test set 3D MEAD-Test (M037 and M040). Please download the 3D MEAD dataset from [Google Cloud Driven](https://drive.google.com/drive/folders/1the46xT6orJa_3LMLXXkyAAmLqGcEG6Y?usp=drive_link) and put it in the `MEAD` folder.
 
 
 ### VOCASET
@@ -61,8 +61,49 @@ Follow the [`BIWI/README.md`](BIWI/README.md) to preprocess BIWI dataset and put
 
 Download the two stages pretrained models from [3D MEAD](https://drive.google.com/drive/folders/1IYVyYp35ueNbXZ3XFbugFMYhTw6PBVJ8?usp=drive_link), [VOCASET](https://drive.google.com/drive/folders/1IYVyYp35ueNbXZ3XFbugFMYhTw6PBVJ8?usp=drive_link), and [BIWI](https://drive.google.com/drive/folders/1IYVyYp35ueNbXZ3XFbugFMYhTw6PBVJ8?usp=drive_link). Put the pretrained models under `3D MEAD`, `VOCASET`, and `BIWI` folders, respectively.
 
-- to animate a mesh in 3D MEAD under different emotion, run: 
+- To animate a video in 3D MEAD under different emotion, run: 
 	```
-	python demo/demo_3d_mead.py vocaset --audio_file <audio_path> --emotion <angry|contempt|disgusted|fear|
+	python demo/demo_3d_mead.py --audio_file <audio_path> --emotion <angry|contempt|disgusted|fear|
     happy|sad|surprised>
 	```
+
+- To animate a video in VOCASET dataset, run: 
+	```
+	python demo/demo_vocaset.py --audio_file <audio_path>
+	```
+
+- To animate a video in BIWI dataset, run: 
+	```
+	python demo/demo_biwi.py --audio_file <audio_path>
+	```
+## **Training the models**
+Once we have all our data sets in place, we can train our two stages as follows:
+- Training the EVQ-VAE model:
+    ```
+    python train/train_<mead|vocaset|biwi>_vqvae.py
+    ```
+- Training the LG-LDM model:
+    ```
+    python train/train_diffusion_<mead|vocaset|biwi>.py
+    ```
+
+## **Test the models**
+After training the models, we can test them as follows:
+
+- Testing the EVQ-VAE model:
+    ```
+    python sample/sample_<mead|vocaset|biwi>_vqvae.py
+    ```
+
+- Testing the LG-LDM model:
+    ```
+    python sample/sample_diffusion_<mead|vocaset|biwi>.py
+    ```
+
+## **Acknowledgement**
+
+We heavily borrow the code from
+[FaceFormer](https://github.com/EvelynFan/FaceFormer),
+[CodeTalker](https://github.com/RenYurui/PIRender), 
+[VOCA](https://github.com/TimoBolkart/voca), and [EMOCA](https://github.com/radekd91/emoca). Thanks
+for sharing their code and [huggingface-transformers](https://github.com/huggingface/transformers/blob/main/src/transformers/models/wav2vec2/modeling_wav2vec2.py) for their HuBERT implementation. We also gratefully acknowledge the ETHZ-CVL for providing the [MEAD](https://wywu.github.io/projects/MEAD/MEAD.html) dataset and MPI-IS for releasing the [VOCASET](https://voca.is.tue.mpg.de/) dataset. Any third-party packages are owned by their respective authors and must be used under their respective licenses.

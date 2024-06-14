@@ -35,7 +35,7 @@ conda create -n FDM python=3.8
 conda activate FDM
 ```
 
-Other necessary packages:
+Then install the necessary packages:
 ```
 pip install -r requirements.txt
 ```

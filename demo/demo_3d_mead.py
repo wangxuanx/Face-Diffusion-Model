@@ -72,10 +72,13 @@ def load_diffusion(load_path, diffusion):
     print('load diffusion')
     diffusion.load_state_dict(checkpoint, strict=False)
     print('load diffusion success')
-    
+
 
 @torch.no_grad()
 def predict(diffusion, autoencoder, dev, audio_path, args):
+    all_emotions = ['angry', 'contempt', 'disgusted', 'fear', 'happy', 'sad', 'surprised']
+    emotion_label = np.eye(len(all_emotions))
+
     sr = 16000
     audio_name = audio_path.split('/')[-1]
 
@@ -83,7 +86,8 @@ def predict(diffusion, autoencoder, dev, audio_path, args):
     processor = Wav2Vec2Processor.from_pretrained('/data/WX/wav2vec2-base-960h')
     processed = processor(speech_array, sampling_rate=16000).input_values
     input_values = np.squeeze(processed)
-    emotion_one_hot = torch.FloatTensor([0, 0, 0, 0, 1, 0, 0])  # ['angry', 'contempt', 'disgusted', 'fear', 'happy', 'sad', 'surprised']
+    
+    emotion_one_hot = torch.FloatTensor(emotion_label[all_emotions.index(args.emotion)])  # ['angry', 'contempt', 'disgusted', 'fear', 'happy', 'sad', 'surprised']
     one_hot = torch.FloatTensor([1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                                 0, 0, 0, 0, 0
@@ -111,7 +115,7 @@ def predict(diffusion, autoencoder, dev, audio_path, args):
 def get_args():
     parser = argparse.ArgumentParser(description='Expressive 3D Facial Animation Generation Based on Local-to-global Latent Diffusion')
     parser.add_argument("--audio_file", type=str, help='the audio file path for prediction')
-    parser.add_argument("--dataset", type=str, default="BIWI", help='vocaset or BIWI')
+    parser.add_argument("--emotion", type=str, default='happy', help='the emotion for prediction', choices=['angry', 'contempt', 'disgusted', 'fear', 'happy', 'sad', 'surprised'])
     parser.add_argument("--vertice_dim", type=int, default=5023*3, help='number of vertices')
     parser.add_argument("--feature_dim", type=int, default=512, help='the fdm feature dimension')
     parser.add_argument("--device", type=str, default="cuda:0")

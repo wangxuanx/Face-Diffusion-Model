@@ -63,5 +63,6 @@ Download the two stages pretrained models from [3D MEAD](https://drive.google.co
 
 - to animate a mesh in 3D MEAD under different emotion, run: 
 	```
-	python demo/demo_3d_mead.py vocaset --audio_file <audio_path>
+	python demo/demo_3d_mead.py vocaset --audio_file <audio_path> --emotion <angry|contempt|disgusted|fear|
+    happy|sad|surprised>
 	```

@@ -1,4 +1,4 @@
-name: flame
+name: fdm
 channels:
   - conda-forge
   - bioconda
@@ -128,4 +128,4 @@ dependencies:
     - urllib3==1.26.16
     - werkzeug==2.3.7
     - zipp==3.16.2
-prefix: /data/miniconda3/envs/flame
+prefix: /data/miniconda3/envs/fdm-

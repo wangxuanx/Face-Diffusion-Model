@@ -5,88 +5,61 @@ import sys
 sys.path.append(".")
 import torch
 from tqdm import tqdm
-from datasets.data_loader_mead import get_dataloaders
+from datasets.data_loader import get_dataloaders
 
-from models.vq_vae_emotion import VQAutoEncoder
-from FLAME_PyTorch.FLAME import FLAME
-from FLAME_PyTorch.config import get_config
-from utiles.flame_utils import torch2mesh
+from models.vq_vae import VQAutoEncoder
+
+from models.utils.config import vocaset_vq_vae_args
 
 from torch.utils.tensorboard import SummaryWriter
 
-def vq_vae_args():
-    parser = argparse.ArgumentParser(description=' ')
-    parser.add_argument('--vqvae_pretrained_path', type=str, default='/data/WX/video-diffusion-pytorch/checkpoints/vqvae/vqvae_100.pt', help='path of the pretrained vqvae')
-    parser.add_argument('--n_embed', type=int, default=256 * 7, help='number of hidden units')  # 将结果映射在7个空间中
-    parser.add_argument('--zquant_dim', type=int, default=64, help='number of residual hidden units')
-    parser.add_argument('--in_dim', type=int, default=5023*3, help='number of input channels')
-    parser.add_argument('--hidden_size', type=int, default=1024, help='number of hidden units')
-    parser.add_argument('--neg', type=int, default=0.2, help='number of negative samples')
-    parser.add_argument('--quant_factor', type=float, default=0, help='number of quantization factor')
-    parser.add_argument('--INaffine', type=bool, default=False, help='number of INaffine')
-    parser.add_argument('--num_hidden_layers', type=int, default=6, help='number of hidden layers')
-    parser.add_argument('--num_attention_heads', type=int, default=8, help='number of attention heads')
-    parser.add_argument('--intermediate_size', type=int, default=1536, help='number of intermediate size')
-    parser.add_argument('--face_quan_num', type=int, default=8, help='number of face quantization')
-
-    args = parser.parse_args()
-    return args
-
 def main():
-    flame_config = get_config()
-    flame = FLAME(flame_config)  # 加载FLAME模型
 
-    vq_args = vq_vae_args()
+    vq_args = vocaset_vq_vae_args()
     autoencoder = VQAutoEncoder(vq_args)
 
     dev = 'cuda:1'
 
     loader = get_dataloaders(batch_size=1, workers=10, read_audio=False)
     train_loader = loader['train']
-    val_loader = loader['valid']
 
-    train_epoch = 400
+    train_epoch = 300
     optimizer = torch.optim.AdamW(params=autoencoder.parameters(), lr=0.0001, amsgrad=True)
 
-    save_path = './checkpoints/vqvae_mead'
+    save_path = './checkpoints/vqvae_BIWI'
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     writer = SummaryWriter(save_path)
 
     autoencoder.train()
-    flame.eval()
     autoencoder.to(dev)
-    flame.to(dev)
 
     for epoch in range(train_epoch):
         epoch_log = epoch + 1
         print(f'Starting epoch {epoch_log}')
 
-        loss = run_step(train_epoch, epoch_log, optimizer, train_loader, flame, autoencoder, writer, save_path, dev)
+        loss = run_step(train_epoch, epoch_log, optimizer, train_loader, autoencoder, writer, save_path, dev)
         writer.add_scalar('Loss/train_epoch', loss, epoch_log)
 
-        if epoch_log % 5 == 0:
-            val_loss, val_recon_loss = eval_step(val_loader, flame, autoencoder, writer, save_path, dev)
-            print(f'val_loss: {val_loss}, val_recon_loss: {val_recon_loss}')
-            writer.add_scalar('Loss/val_epoch', val_loss, epoch_log)
-            writer.add_scalar('Loss/val_recon_epoch', val_recon_loss, epoch_log)
+        # if epoch_log % 5 == 0:
+        #     val_loss, val_recon_loss = eval_step(val_loader, flame, autoencoder, writer, save_path, dev)
+        #     print(f'val_loss: {val_loss}, val_recon_loss: {val_recon_loss}')
+        #     writer.add_scalar('Loss/val_epoch', val_loss, epoch_log)
+        #     writer.add_scalar('Loss/val_recon_epoch', val_recon_loss, epoch_log)
 
-def run_step(epochs, epoch_log, optimizer, train_loader, flame, autoencoder, writer, save_path, dev):
+def run_step(epochs, epoch_log, optimizer, train_loader, autoencoder, writer, save_path, dev):
     
     with tqdm(range(len(train_loader)), desc=f'Train[{epoch_log}/{epochs}]') as tbar:
         sum_loss = 0
-        for i, (mead_motion, mead_template, emotion_one_hot, id_one_hot, file_name) in enumerate(train_loader):
+        for i, (motion, template, id_one_hot, file_name) in enumerate(train_loader):
             optimizer.zero_grad()
-            # F2_e03.wav ---> F2_e03.npy
-            # 0 --> n
-            mead_motion = mead_motion.to(dev)
-            mead_template = mead_template.to(dev)
-            emotion_one_hot = emotion_one_hot.to(dev)
 
-            motion = torch2mesh(flame, mead_motion[:, :, :50], mead_motion[:, :, 50:])
-            template = torch2mesh(flame, mead_template[:, :, :50], mead_template[:, :, 50:])
+            motion = motion.to(dev)
+            template = template.to(dev)
 
-            recon, quant_loss, info = autoencoder(motion, template, emotion_one_hot)
+            latent_motion = autoencoder.encode(motion - template)
+            quanted, quant_loss, _ = autoencoder.quant(latent_motion)
+            recon = autoencoder.decode(quanted) + template
 
             # LOSS
             loss, loss_details = vq_loss(recon, motion, quant_loss)
@@ -113,13 +86,10 @@ def run_step(epochs, epoch_log, optimizer, train_loader, flame, autoencoder, wri
 def eval_step(val_loader, flame, autoencoder, writer, save_path, dev):
     sum_loss = 0
     sum_recon_loss = 0
-    for i, (mead_motion, mead_template, emotion_one_hot, id_one_hot, file_name) in enumerate(val_loader):
-        mead_motion = mead_motion.to(dev)
-        mead_template = mead_template.to(dev)
+    for i, (motion, template, emotion_one_hot, id_one_hot, file_name) in enumerate(val_loader):
+        motion = motion.to(dev)
+        template = template.to(dev)
         emotion_one_hot = emotion_one_hot.to(dev)
-
-        motion = torch2mesh(flame, mead_motion[:, :, :50], mead_motion[:, :, 50:])
-        template = torch2mesh(flame, mead_template[:, :, :50], mead_template[:, :, 50:])
 
         recon, quant_loss, info = autoencoder(motion, template, emotion_one_hot)
 

@@ -551,8 +551,6 @@ class GaussianDiffusion(nn.Module):
         self,
         denoise_fn,
         *,
-        image_size,
-        num_frames,
         text_use_bert_cls = False,
         channels = 3,
         timesteps = 1000,
@@ -562,8 +560,6 @@ class GaussianDiffusion(nn.Module):
     ):
         super().__init__()
         self.channels = channels
-        self.image_size = image_size
-        self.num_frames = num_frames
         self.denoise_fn = denoise_fn
 
         betas = cosine_beta_schedule(timesteps)
@@ -642,49 +638,48 @@ class GaussianDiffusion(nn.Module):
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def p_mean_variance(self, x, t, clip_denoised: bool, audio, latent_motion_frames, one_hot):
-        x_recon = self.denoise_fn.predict(audio, t, x, latent_motion_frames, one_hot)
-        x_recon_frame = x_recon[:, :, -8:]
+    def p_mean_variance(self, x, t, clip_denoised: bool, audio, id_one_hot):
+        x_recon = self.denoise_fn(audio, t, x, id_one_hot)  # gt
         # x_recon = self.predict_start_from_noise_vq(x_recon, t)
         # noise = self.predict_noise_from_start(x, t, x_recon)
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon_frame, x_t=x, t=t)
+        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
         
         return model_mean, posterior_variance, posterior_log_variance
 
     @torch.inference_mode()
-    def p_sample(self, x, t, audio, latent_motion_frames, one_hot, clip_denoised = False):
+    def p_sample(self, x, t, audio, id_one_hot, clip_denoised = False):
         b, *_, device = *x.shape, x.device
-        model_mean, _, model_log_variance = self.p_mean_variance(x, t, clip_denoised, audio, latent_motion_frames, one_hot)
+        model_mean, _, model_log_variance = self.p_mean_variance(x, t, clip_denoised, audio, id_one_hot)
 
         noise = torch.randn_like(x) if t > 0 else 0. # no noise if t == 0
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
         return pred_img
 
     @torch.inference_mode()
-    def p_sample_loop(self, shape, audio, latent_motion_frames, one_hot):
+    def p_sample_loop(self, shape, audio, id_one_hot):
         device = self.betas.device
         b = shape[0]
         img = torch.randn(shape, device=device)
-
-        for i in tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):
-            img = self.p_sample(img, torch.full((b,), i, device=device, dtype=torch.long), audio, latent_motion_frames, one_hot)
+        self.num_timesteps = 500
+        # for i in tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):
+        for i in tqdm(reversed(range(500, 1000)), desc='sampling loop time step', total=self.num_timesteps):
+            img = self.p_sample(img, torch.full((b,), i, device=device, dtype=torch.long), audio, id_one_hot)
 
         return img
 
     @torch.inference_mode()
-    def sample(self, audio, latent_motion, latent_motion_frames, one_hot):
-        return self.p_sample_loop(latent_motion.shape, audio, latent_motion_frames, one_hot)
+    def sample(self, audio, latent_motion_shape, id_one_hot):
+        return self.p_sample_loop(latent_motion_shape, audio, id_one_hot)
     
     @torch.inference_mode()
-    def ddim_sample(self, audio, latent_motion, latent_motion_frames, one_hot):
+    def ddim_sample(self, audio, latent_motion_shape, id_one_hot, steps=500):
         eta = 0.0
 
-        shape = latent_motion.shape
         device = self.betas.device
-        b = shape[0]
-        motion = torch.randn(shape, device=device)
+        b = latent_motion_shape[0]
+        motion = torch.randn(latent_motion_shape, device=device)
 
-        sampling_timesteps = 20
+        sampling_timesteps = steps
 
         times = np.linspace(-1, 1000 - 1, sampling_timesteps + 1).astype(np.int32)
         # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
@@ -694,12 +689,10 @@ class GaussianDiffusion(nn.Module):
         for i, i_next in tqdm(time_pairs, desc='sampling loop time step'):
             t = torch.full((b,), i, device=device, dtype=torch.long)
             t_next = torch.full((b,), i_next, device=device, dtype=torch.long)
-            x_recon = self.denoise_fn.predict(audio, t, motion, latent_motion_frames, one_hot)
-            x_recon = x_recon[:, :, -8:]
+            x_recon = self.denoise_fn(audio, t, motion, id_one_hot)
             pred_noise = self.predict_noise_from_start(motion, t, x_recon)
 
             if i_next < 0:
-                img = x_recon
                 continue
 
             # 获得阿尔法和前一阿尔法
@@ -715,50 +708,7 @@ class GaussianDiffusion(nn.Module):
             motion = x_recon * torch.sqrt(alpha_bar_next) + c * pred_noise + sigma * noise
 
         return motion
-    
-    @torch.inference_mode()
-    # def ddim_sample(self, shape, clip_denoise=True):
-    #     batch = shape[0]
-    #     total_timesteps, sampling_timesteps, = self.num_timesteps, self.sampling_timesteps
-    #     eta, objective = self.ddim_sampling_eta, self.objective
 
-    #     # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
-    #     times = np.linspace(-1, total_timesteps - 1, sampling_timesteps + 1).astype(np.int32)
-    #     # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
-    #     times = list(reversed(times.tolist()))
-    #     time_pairs = list(zip(times[:-1], times[1:]))
-
-    #     # 采样第一次迭代，Unet输入img为随机采样
-    #     img = np.random.randn(*shape).astype(np.float32)
-    #     x_start = None
-
-    #     for time, time_next in tqdm(time_pairs, desc='sampling loop time step'):
-    #         # time_cond = ops.fill(mindspore.int32, (batch,), time)
-    #         time_cond = np.full((batch,), time).astype(np.int32)
-    #         x_start = Tensor(x_start) if x_start is not None else x_start
-    #         self_cond = x_start if self.self_condition else None
-    #         predict_noise, x_start, *_ = self.model_predictions(Tensor(img, mindspore.float32),
-    #                                                             Tensor(time_cond),
-    #                                                             self_cond,
-    #                                                             clip_denoise)
-    #         predict_noise, x_start = predict_noise.asnumpy(), x_start.asnumpy()
-    #         if time_next < 0:
-    #             img = x_start
-    #             continue
-
-    #         alpha = self.alphas_cumprod[time]
-    #         alpha_next = self.alphas_cumprod[time_next]
-
-    #         sigma = eta * np.sqrt(((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)))
-    #         c = np.sqrt(1 - alpha_next - sigma ** 2)
-
-    #         noise = np.random.randn(*img.shape)
-
-    #         img = x_start * np.sqrt(alpha_next) + c * predict_noise + sigma * noise
-
-    #     img = unnormalize_img(img)
-
-    #     return img
 
     @torch.inference_mode()
     def interpolate(self, x1, x2, t = None, lam = 0.5):
@@ -784,7 +734,7 @@ class GaussianDiffusion(nn.Module):
             extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def p_losses(self, x_start, t, audio, motion_frames, one_hot):
+    def p_losses(self, x_start, t, audio, id_one_hot):
 
         device = x_start.device
         noise = torch.randn_like(x_start).to(device)  # 随机一个噪声
@@ -793,23 +743,22 @@ class GaussianDiffusion(nn.Module):
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
 
         # 进入Model中
-        all_recon = self.denoise_fn(audio, t, x_noisy, motion_frames, one_hot)
-        x_recon = all_recon[:, :, -8:]
+        x_recon = self.denoise_fn(audio, t, x_noisy, id_one_hot)
         # 与gt计算loss
         if self.loss_type == 'l1':
             loss = F.l1_loss(x_start, x_recon)
         elif self.loss_type == 'l2':
-            loss = F.mse_loss(x_start, x_recon)
+            loss = F.mse_loss(x_start[:, :x_recon.shape[1]], x_recon)
         else:
             raise NotImplementedError()
 
         return loss, x_recon
 
-    def forward(self, x, audio, motion_frames, one_hot):
-        b, device, img_size, = x.shape[0], x.device, self.image_size
+    def forward(self, x, audio, id_one_hot):
+        b, device, = x.shape[0], x.device
         # check_shape(x, 'b c f h w', c = self.channels, f = self.num_frames, h = img_size, w = img_size)
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
-        return self.p_losses(x, t, audio, motion_frames, one_hot)
+        return self.p_losses(x, t, audio, id_one_hot)
 
 # trainer class
 

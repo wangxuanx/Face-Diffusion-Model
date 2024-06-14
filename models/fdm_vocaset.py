@@ -3,11 +3,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 from models.hubert import HubertModel
-from models.wav2vec import Wav2Vec2Model
 from utiles.adaIN import adaptive_instance_normalization as adaIN
 
 class FDM(nn.Module):
-    def __init__(self, feature_dim=512, vertice_dim=70110, n_head=4, num_layers=8, struct='Enc'):
+    def __init__(self, feature_dim=512, n_head=8, num_layers=8, struct='Enc'):
         super(FDM, self).__init__()
         """
         audio: (batch_size, raw_wav)
@@ -15,11 +14,11 @@ class FDM(nn.Module):
         vertice: (batch_size, seq_len, V*3)
         """
         self.struct = struct
-        self.audio_encoder = Wav2Vec2Model.from_pretrained('/data/WX/wav2vec2-base-960h')
+        self.audio_encoder = HubertModel.from_pretrained('/data/WX/hubert-large-ls960-ft')
         # wav2vec 2.0 weights initialization
         self.audio_encoder.feature_extractor._freeze_parameters()
         self.audio_extract = nn.Sequential(
-            nn.Linear(768 * 2, feature_dim),  # 128 1024
+            nn.Linear(1024, feature_dim),  # 128 1024
             nn.Mish(),
             nn.Linear(feature_dim, feature_dim)
         )
@@ -31,17 +30,16 @@ class FDM(nn.Module):
             nn.Linear(1000, feature_dim),
             nn.Mish(),
         )
-        # motion embedding
-        self.emotion_embedd = nn.Linear(7, feature_dim)
         # style embedding
-        self.style_embedd = nn.Linear(10, feature_dim)
+        self.style_embedd = nn.Linear(8, feature_dim)
         # latent encoder
         self.latent_encoder = nn.Sequential(
             nn.Linear(feature_dim, feature_dim),
             nn.Mish()
         )
         # positional encoding 
-        self.PE = PositionalEncoding(feature_dim)
+        # self.PE = PositionalEncoding(feature_dim)
+        self.PE = PeriodicPositionalEncoding(feature_dim, period=30)
         # temporal bias
         self.biased_mask = init_biased_mask(n_head = n_head, max_seq_len = 600, period=30)
         decoder_layer = nn.TransformerDecoderLayer(d_model=feature_dim, nhead=n_head, dim_feedforward=2*feature_dim, batch_first=True)        
@@ -52,26 +50,17 @@ class FDM(nn.Module):
         nn.init.constant_(self.latent_decoder.weight, 0)
         nn.init.constant_(self.latent_decoder.bias, 0)
 
-    def mask_cond(self, cond, train=False, force_mask=False):
-        bs, d = cond.shape
-        if force_mask:
-            return torch.zeros_like(cond)
-        elif train:
-            mask = torch.bernoulli(torch.ones_like(cond, device=cond.device) * 0.1)  # 1-> use null_cond, 0-> use real cond
-            return cond * (1. - mask)
-        else:
-            return cond
 
-
-    def forward(self, audio, t, vertice, emotion_one_hot, id_one_hot, mask_cond=False, train=True):
+    def forward(self, audio, t, vertice, id_one_hot):
         # tgt_mask: :math:`(T, T)`.
         # memory_mask: :math:`(T, S)`.
         device = audio.device
         
-        audio = self.audio_encoder(audio).last_hidden_state
+        audio = self.audio_encoder(audio, 'vocaset').last_hidden_state
         B, N, M = audio.shape
         
-        audio = audio.reshape(B, N // 2, M * 2)  # (B, N // 2, M * 2)
+        # audio = audio.reshape(B, N // 2, M * 2)  # (B, N // 2, M * 2)
+        vertice = vertice.reshape(B, vertice.shape[1] // 16, vertice.shape[2] * 16)  # (B, N // 2, V * 3)
         num_frames = min(audio.shape[1], vertice.shape[1])
         audio = audio[:, :num_frames, :]
         vertice = vertice[:, :num_frames, :]
@@ -82,12 +71,10 @@ class FDM(nn.Module):
         times = torch.FloatTensor(self.one_hot_timesteps[t]).to(device)
         time = self.time_embedd(times)
 
-        emotion = self.emotion_embedd(emotion_one_hot).unsqueeze(0)
-
         # # style embedding
         style = self.style_embedd(id_one_hot).unsqueeze(0)
         
-        vertice_feature = vertice_feature + style + emotion
+        vertice_feature = vertice_feature + style
         
         audio_feature += time
         # vertice_feature += emotion
@@ -96,36 +83,13 @@ class FDM(nn.Module):
 
         vertice_feature = self.PE(vertice_feature)
         tgt_mask = self.biased_mask[:, :vertice_feature.shape[1], :vertice_feature.shape[1]].clone().detach().to(device=device)
-        memory_mask = enc_dec_mask(device, 'BIWI', vertice_feature.shape[1], audio_feature.shape[1])
+        memory_mask = enc_dec_mask(device, 'vocaset', vertice_feature.shape[1], audio_feature.shape[1])
         feat_out = self.transformer_decoder(vertice_feature, audio_feature, tgt_mask=tgt_mask, memory_mask=memory_mask)
 
         feat_out = self.latent_decoder(feat_out)
+        feat_out = feat_out.reshape(B, feat_out.shape[1] * 16, feat_out.shape[2] // 16)
         return feat_out
 
-    def predict(self, audio, t, vertice, one_hot):
-
-        B, N, M = audio.shape
-
-        audio_feature = self.audio_extract(audio)
-        time = self.time_embedd(t.unsqueeze(1))
-        vertice = vertice.flatten(-2).unsqueeze(1)
-        
-        # style embedding
-        style = self.learnable_style_emb(one_hot).unsqueeze(0).repeat(B, 1, 1)
-
-        tens_input = torch.cat((time, audio_feature, style, vertice), 1).permute(1, 0, 2)
-
-        if self.struct == 'Enc':
-            tens_input = self.PE(tens_input)
-            feat_out = self.transformer_encoder(tens_input)
-            feat_out = feat_out[-1:, :, :].transpose(0, 1)
-        elif self.struct == 'Dec':
-            tgt_mask = self.biased_mask[:, :vertice.shape[1], :vertice.shape[1]].clone().detach().to(device=self.device)
-            memory_mask = enc_dec_mask(self.device, self.dataset, vertice.shape[1], tens_input.shape[1])
-            feat_out = self.transformer_decoder(vertice, tens_input, tgt_mask=tgt_mask, memory_mask=memory_mask)
-        
-        feat_out = self.motion_decoder(feat_out).reshape(B, -1, 128)
-        return feat_out
 
 # Temporal Bias
 def init_biased_mask(n_head, max_seq_len, period):
@@ -199,4 +163,22 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         # not used in the final model
         x = x + self.pe[:, :x.shape[1], :]
+        return self.dropout(x)
+
+# Periodic Positional Encoding
+class PeriodicPositionalEncoding(nn.Module):
+    def __init__(self, d_model, dropout=0.1, period=25, max_seq_len=600):
+        super(PeriodicPositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        pe = torch.zeros(period, d_model)
+        position = torch.arange(0, period, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0) # (1, period, d_model)
+        repeat_num = (max_seq_len//period) + 1
+        pe = pe.repeat(1, repeat_num, 1)
+        self.register_buffer('pe', pe)
+    def forward(self, x):
+        x = x + self.pe[:, :x.size(1), :]
         return self.dropout(x)

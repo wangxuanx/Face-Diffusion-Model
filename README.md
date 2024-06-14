@@ -104,6 +104,5 @@ After training the models, we can test them as follows:
 
 We heavily borrow the code from
 [FaceFormer](https://github.com/EvelynFan/FaceFormer),
-[CodeTalker](https://github.com/RenYurui/PIRender), 
-[VOCA](https://github.com/TimoBolkart/voca), and [EMOCA](https://github.com/radekd91/emoca). Thanks
+[CodeTalker](https://github.com/RenYurui/PIRender), and [VOCA](https://github.com/TimoBolkart/voca). Thanks
 for sharing their code and [huggingface-transformers](https://github.com/huggingface/transformers/blob/main/src/transformers/models/wav2vec2/modeling_wav2vec2.py) for their HuBERT implementation. We also gratefully acknowledge the ETHZ-CVL for providing the [MEAD](https://wywu.github.io/projects/MEAD/MEAD.html) dataset and MPI-IS for releasing the [VOCASET](https://voca.is.tue.mpg.de/) dataset. Any third-party packages are owned by their respective authors and must be used under their respective licenses.

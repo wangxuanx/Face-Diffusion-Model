@@ -20,7 +20,7 @@ def main():
     autoencoder = VQAutoEncoder(vq_args)
     autoencoder.load_state_dict(torch.load('./checkpoints/vqvae_mead/model-30.mpt')['model'])
 
-    save_path = './checkpoints/vqvae_mead/result_30'
+    save_path = './checkpoints/vqvae_mead/result'
     dev = 'cuda:1'
     autoencoder.eval()  # 评估vqvae模型
     autoencoder.to(dev)

@@ -2,7 +2,7 @@
 
 Official PyTorch implementation for the paper:
 
-> **Expressive 3D Facial Animation Generation Based on Local-to-global Latent Diffusion**
+> **Expressive 3D Facial Animation Generation Based on Local-to-global Latent Diffusion [TVCG 2024]**
 >
 > Wenfeng Song*, Xuan Wang, Yiming Jiang, Shuai Li*, Aimin Hao, Xia Hou, and Hong Qin
 

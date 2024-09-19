@@ -59,7 +59,7 @@ Follow the [`BIWI/README.md`](BIWI/README.md) to preprocess BIWI dataset and put
 
 ## **Demo Test**
 
-Download the two stages pretrained models from [3D MEAD](https://drive.google.com/drive/folders/1IYVyYp35ueNbXZ3XFbugFMYhTw6PBVJ8?usp=drive_link), [VOCASET](https://drive.google.com/drive/folders/1IYVyYp35ueNbXZ3XFbugFMYhTw6PBVJ8?usp=drive_link), and [BIWI](https://drive.google.com/drive/folders/1IYVyYp35ueNbXZ3XFbugFMYhTw6PBVJ8?usp=drive_link). Put the pretrained models under `MEAD`, `VOCASET`, and `BIWI` folders, respectively.
+Download the two stages pretrained models from [3D MEAD](https://drive.google.com/drive/folders/1IYVyYp35ueNbXZ3XFbugFMYhTw6PBVJ8?usp=drive_link)([Baidu Drive](https://pan.baidu.com/s/1aVAsAYywG9Jp2vEV3T1XNg?pwd=utck)), [VOCASET](https://drive.google.com/drive/folders/1IYVyYp35ueNbXZ3XFbugFMYhTw6PBVJ8?usp=drive_link), and [BIWI](https://drive.google.com/drive/folders/1IYVyYp35ueNbXZ3XFbugFMYhTw6PBVJ8?usp=drive_link). Put the pretrained models under `MEAD`, `VOCASET`, and `BIWI` folders, respectively.
 
 - To animate a video in 3D MEAD under different emotion, run: 
 	```
